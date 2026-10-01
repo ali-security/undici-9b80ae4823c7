@@ -1,7 +1,6 @@
 name: Benchmarks
 on:
-  - push
-  - pull_request
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -10,6 +9,7 @@ jobs:
   benchmark_current:
     name: benchmark current
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout Code
         uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
@@ -32,6 +32,7 @@ jobs:
   benchmark_branch:
     name: benchmark branch
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout Code
         uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
@@ -53,6 +54,7 @@ jobs:
   benchmark_post_current:
     name: benchmark (sending data) current
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout Code
         uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
@@ -75,6 +77,7 @@ jobs:
   benchmark_post_branch:
     name: benchmark (sending data) branch
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout Code
         uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
@@ -96,6 +99,7 @@ jobs:
   benchmark_current_h2:
     name: benchmark current h2
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout Code
         uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
@@ -118,6 +122,7 @@ jobs:
   benchmark_branch_h2:
     name: benchmark branch h2
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout Code
         uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2

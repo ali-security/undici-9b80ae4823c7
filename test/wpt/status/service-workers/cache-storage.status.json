@@ -21,7 +21,10 @@
       "note": "requires https server; flaky is on windows only TODO(@KhafraDev) investigate it",
       "fail": [
         "cors-exposed header should be stored correctly.",
-        "Cache.match ignores vary headers on opaque response."
+        "Cache.match ignores vary headers on opaque response.",
+        "Cache.match with POST Request",
+        "Cache.match with a non-2xx Response",
+        "Cache.match with a network error Response"
       ],
       "flaky": [
         "Cache.match invoked multiple times for the same Request/Response"

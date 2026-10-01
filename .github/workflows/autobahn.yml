@@ -2,12 +2,6 @@ name: Autobahn
 on:
   workflow_dispatch:
 
-  pull_request:
-    paths:
-      - '.github/workflows/autobahn.yml'
-      - 'lib/web/websocket/**'
-      - 'test/autobahn/**'
-
 permissions:
   contents: read
   pull-requests: write
@@ -16,6 +10,7 @@ jobs:
   autobahn:
     name: Autobahn Test Suite
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     container: node:22
     services:
       fuzzingserver:

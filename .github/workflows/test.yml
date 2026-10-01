@@ -39,10 +39,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Print installed dependencies
-        run: npm ls --all
-        continue-on-error: true
-
       - name: Run tests with coverage
         id: coverage
         if: inputs.runs-on == 'ubuntu-latest' && inputs.node-version == 22

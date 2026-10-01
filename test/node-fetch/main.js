@@ -1615,7 +1615,7 @@ describe('node-fetch', () => {
     })
   })
 
-  it('should support http request', { timeout: 5000 }, function () {
+  it('should support http request', { timeout: 30000 }, function () {
     const url = 'https://github.com/'
     const options = {
       method: 'HEAD'
