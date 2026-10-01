@@ -1,11 +1,11 @@
 'use strict'
 
-const { test } = require('node:test')
+const { test, describe, before, after } = require('node:test')
 const assert = require('node:assert')
 const { createServer } = require('node:http')
 const { once } = require('node:events')
 const { fetch } = require('../..')
-const { createBrotliCompress, createGzip, createDeflate } = require('node:zlib')
+const { createBrotliCompress, createGzip, createDeflate, gzipSync } = require('node:zlib')
 const { closeServerAsPromise } = require('../utils/node-http')
 
 test('content-encoding header is case-iNsENsITIve', async (t) => {
@@ -57,4 +57,120 @@ test('response decompression according to content-encoding should be handled in 
   const response = await fetch(`http://localhost:${server.address().port}`)
 
   assert.strictEqual(await response.text(), text)
+})
+
+describe('content-encoding chain limit', () => {
+  // CVE fix: Limit the number of content-encodings to prevent resource exhaustion
+  // Similar to urllib3 (GHSA-gm62-xv2j-4w53) and curl (CVE-2022-32206)
+  const MAX_CONTENT_ENCODINGS = 5
+
+  let server
+  before(async () => {
+    server = createServer({
+      noDelay: true
+    }, (req, res) => {
+      const encodingCount = parseInt(req.headers['x-encoding-count'] || '1', 10)
+      const encodings = Array(encodingCount).fill('identity').join(', ')
+
+      res.writeHead(200, {
+        'Content-Encoding': encodings,
+        'Content-Type': 'text/plain'
+      })
+      res.end('test')
+    })
+    await once(server.listen(0), 'listening')
+  })
+
+  after(() => {
+    server.close()
+  })
+
+  test(`should allow exactly ${MAX_CONTENT_ENCODINGS} content-encodings`, async (t) => {
+    const response = await fetch(`http://localhost:${server.address().port}`, {
+      keepalive: false,
+      headers: { 'x-encoding-count': String(MAX_CONTENT_ENCODINGS) }
+    })
+
+    assert.strictEqual(response.status, 200)
+    // identity encoding is a no-op, so the body should be passed through
+    assert.strictEqual(await response.text(), 'test')
+  })
+
+  test(`should reject more than ${MAX_CONTENT_ENCODINGS} content-encodings`, async (t) => {
+    await assert.rejects(
+      fetch(`http://localhost:${server.address().port}`, {
+        keepalive: false,
+        headers: { 'x-encoding-count': String(MAX_CONTENT_ENCODINGS + 1) }
+      }),
+      (err) => {
+        assert.ok(err.cause?.message.includes('content-encoding'))
+        return true
+      }
+    )
+  })
+
+  test('should reject excessive content-encoding chains', async (t) => {
+    await assert.rejects(
+      fetch(`http://localhost:${server.address().port}`, {
+        keepalive: false,
+        headers: { 'x-encoding-count': '100' }
+      }),
+      (err) => {
+        assert.ok(err.cause?.message.includes('content-encoding'))
+        return true
+      }
+    )
+  })
+})
+
+describe('content-encoding chain limit with real decoders', () => {
+  const MAX_CONTENT_ENCODINGS = 5
+  const text = 'Hello, World!'
+
+  let server
+  before(async () => {
+    server = createServer({
+      noDelay: true
+    }, (req, res) => {
+      const encodingCount = parseInt(req.headers['x-encoding-count'] || '1', 10)
+      let body = Buffer.from(text)
+      for (let i = 0; i < encodingCount; i++) {
+        body = gzipSync(body)
+      }
+
+      res.writeHead(200, {
+        'Content-Encoding': Array(encodingCount).fill('gzip').join(', '),
+        'Content-Type': 'text/plain'
+      })
+      res.end(body)
+    })
+    await once(server.listen(0), 'listening')
+  })
+
+  after(() => {
+    server.close()
+  })
+
+  test(`should decode exactly ${MAX_CONTENT_ENCODINGS} gzip content-encodings`, async (t) => {
+    const response = await fetch(`http://localhost:${server.address().port}`, {
+      keepalive: false,
+      headers: { 'x-encoding-count': String(MAX_CONTENT_ENCODINGS) }
+    })
+
+    assert.strictEqual(response.status, 200)
+    assert.strictEqual(await response.text(), text)
+  })
+
+  test(`should reject more than ${MAX_CONTENT_ENCODINGS} gzip content-encodings`, async (t) => {
+    await assert.rejects(
+      fetch(`http://localhost:${server.address().port}`, {
+        keepalive: false,
+        headers: { 'x-encoding-count': String(MAX_CONTENT_ENCODINGS + 1) }
+      }),
+      (err) => {
+        assert.ok(err.cause?.message.includes('content-encoding'))
+        return true
+      }
+    )
+  })
 })
