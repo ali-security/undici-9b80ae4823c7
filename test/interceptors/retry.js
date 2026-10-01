@@ -313,6 +313,121 @@ test('Should handle 206 partial content', async t => {
   t.strictEqual(counter, 1)
 })
 
+test('Should reject initial 206 partial content with mismatched content-length', async t => {
+  t = tspl(t, { plan: 3 })
+
+  let x = 0
+  const server = createServer({ joinDuplicateHeaders: true }, (req, res) => {
+    if (x === 0) {
+      t.strictEqual(req.headers.range, 'bytes=0-99')
+      res.statusCode = 206
+      res.setHeader('content-range', 'bytes 0-99/300')
+      res.setHeader('content-length', '300')
+      res.end('1'.repeat(99))
+      res.socket?.destroy()
+    } else if (x === 1) {
+      res.statusCode = 206
+      res.setHeader('content-range', 'bytes 99-99/300')
+      res.setHeader('content-length', '1')
+      res.end('1')
+    }
+    x++
+  })
+
+  server.listen(0)
+
+  await once(server, 'listening')
+
+  const client = new Client(
+    `http://localhost:${server.address().port}`
+  ).compose(retry())
+
+  after(async () => {
+    await client.close()
+    server.close()
+
+    await once(server, 'close')
+  })
+
+  await t.rejects(async () => {
+    const response = await client.request({
+      method: 'GET',
+      path: '/',
+      headers: {
+        range: 'bytes=0-99'
+      }
+    })
+    await response.body.text()
+  }, {
+    name: 'RequestRetryError',
+    code: 'UND_ERR_REQ_RETRY',
+    message: 'Content-Length mismatch'
+  })
+  t.strictEqual(x, 1)
+})
+
+test('Should reject resumed 206 partial content with mismatched content-length when the original length is unknown', async t => {
+  t = tspl(t, { plan: 5 })
+
+  let x = 0
+  const injectedResponse = 'HTTP/1.1 302 Found\r\nLocation: http://evil.com\r\nContent-Length: 0\r\n\r\n'
+  const server = createServer({ joinDuplicateHeaders: true }, (req, res) => {
+    if (x === 0) {
+      t.ok(true, 'pass')
+      res.setHeader('etag', 'asd')
+      res.write('abc')
+      setTimeout(() => {
+        res.destroy()
+      }, 1e2)
+    } else if (x === 1) {
+      t.strictEqual(req.headers.range, 'bytes=3-')
+      res.statusCode = 206
+      res.setHeader('etag', 'asd')
+      res.setHeader('content-range', 'bytes 3-5/6')
+      res.setHeader('content-length', String(3 + injectedResponse.length))
+      res.end(`def${injectedResponse}`)
+    }
+    x++
+  })
+
+  server.listen(0)
+
+  await once(server, 'listening')
+
+  const client = new Client(
+    `http://localhost:${server.address().port}`
+  ).compose(retry())
+
+  after(async () => {
+    await client.close()
+    server.close()
+
+    await once(server, 'close')
+  })
+
+  const response = await client.request({
+    method: 'GET',
+    path: '/',
+    retryOptions: {
+      retry: (err, _context, done) => {
+        if (err.message.includes('other side closed')) {
+          setTimeout(done, 100)
+          return
+        }
+
+        done(err)
+      }
+    }
+  })
+  t.strictEqual(response.statusCode, 200)
+  await t.rejects(response.body.text(), {
+    name: 'RequestRetryError',
+    code: 'UND_ERR_REQ_RETRY',
+    message: 'Content-Length mismatch'
+  })
+  t.strictEqual(x, 2)
+})
+
 test('Should handle 206 partial content - bad-etag', async t => {
   t = tspl(t, { plan: 3 })
 
@@ -328,7 +443,7 @@ test('Should handle 206 partial content - bad-etag', async t => {
       }, 1e2)
     } else if (x === 1) {
       t.deepStrictEqual(req.headers.range, 'bytes=3-')
-      res.setHeader('content-range', 'bytes 3-6/6')
+      res.setHeader('content-range', 'bytes 3-5/6')
       res.setHeader('etag', 'erwsd')
       res.statusCode = 206
       res.end('def')
