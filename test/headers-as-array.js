@@ -153,3 +153,179 @@ test('fail if headers is not an object or an array', async (t) => {
 
   await t.completed
 })
+
+test('fail if duplicate content-length headers (different case)', async (t) => {
+  t = tspl(t, { plan: 2 })
+  const headers = ['Content-Length', '5', 'content-length', '0']
+
+  const server = createServer({ joinDuplicateHeaders: true }, (req, res) => { res.end() })
+  after(() => server.close())
+  server.listen(0, () => {
+    const client = new Client(`http://localhost:${server.address().port}`)
+    after(() => client.close())
+
+    client.request({
+      path: '/',
+      method: 'POST',
+      headers,
+      body: 'hello'
+    }, (err) => {
+      t.ok(err instanceof errors.InvalidArgumentError)
+      t.strictEqual(err.message, 'duplicate content-length header')
+    })
+  })
+
+  await t.completed
+})
+
+test('fail if duplicate content-length headers (same case)', async (t) => {
+  t = tspl(t, { plan: 2 })
+  const headers = ['content-length', '5', 'content-length', '0']
+
+  const server = createServer({ joinDuplicateHeaders: true }, (req, res) => { res.end() })
+  after(() => server.close())
+  server.listen(0, () => {
+    const client = new Client(`http://localhost:${server.address().port}`)
+    after(() => client.close())
+
+    client.request({
+      path: '/',
+      method: 'POST',
+      headers,
+      body: 'hello'
+    }, (err) => {
+      t.ok(err instanceof errors.InvalidArgumentError)
+      t.strictEqual(err.message, 'duplicate content-length header')
+    })
+  })
+
+  await t.completed
+})
+
+test('fail if duplicate host headers (different case)', async (t) => {
+  t = tspl(t, { plan: 2 })
+  const headers = ['Host', 'example.com', 'host', 'evil.com']
+
+  const server = createServer({ joinDuplicateHeaders: true }, (req, res) => { res.end() })
+  after(() => server.close())
+  server.listen(0, () => {
+    const client = new Client(`http://localhost:${server.address().port}`)
+    after(() => client.close())
+
+    client.request({
+      path: '/',
+      method: 'GET',
+      headers
+    }, (err) => {
+      t.ok(err instanceof errors.InvalidArgumentError)
+      t.strictEqual(err.message, 'duplicate host header')
+    })
+  })
+
+  await t.completed
+})
+
+test('fail if duplicate host headers (same case)', async (t) => {
+  t = tspl(t, { plan: 2 })
+  const headers = ['host', 'example.com', 'host', 'evil.com']
+
+  const server = createServer({ joinDuplicateHeaders: true }, (req, res) => { res.end() })
+  after(() => server.close())
+  server.listen(0, () => {
+    const client = new Client(`http://localhost:${server.address().port}`)
+    after(() => client.close())
+
+    client.request({
+      path: '/',
+      method: 'GET',
+      headers
+    }, (err) => {
+      t.ok(err instanceof errors.InvalidArgumentError)
+      t.strictEqual(err.message, 'duplicate host header')
+    })
+  })
+
+  await t.completed
+})
+
+test('fail if duplicate content-length headers (object with different case keys)', async (t) => {
+  t = tspl(t, { plan: 2 })
+  const headers = { 'Content-Length': '5', 'content-length': '0' }
+
+  const server = createServer({ joinDuplicateHeaders: true }, (req, res) => { res.end() })
+  after(() => server.close())
+  server.listen(0, () => {
+    const client = new Client(`http://localhost:${server.address().port}`)
+    after(() => client.close())
+
+    client.request({
+      path: '/',
+      method: 'POST',
+      headers,
+      body: 'hello'
+    }, (err) => {
+      t.ok(err instanceof errors.InvalidArgumentError)
+      t.strictEqual(err.message, 'duplicate content-length header')
+    })
+  })
+
+  await t.completed
+})
+
+test('fail if duplicate host headers (iterable of key-value pairs)', async (t) => {
+  t = tspl(t, { plan: 2 })
+  const headers = new Map([['Host', 'example.com'], ['host', 'evil.com']])
+
+  const server = createServer({ joinDuplicateHeaders: true }, (req, res) => { res.end() })
+  after(() => server.close())
+  server.listen(0, () => {
+    const client = new Client(`http://localhost:${server.address().port}`)
+    after(() => client.close())
+
+    client.request({
+      path: '/',
+      method: 'GET',
+      headers
+    }, (err) => {
+      t.ok(err instanceof errors.InvalidArgumentError)
+      t.strictEqual(err.message, 'duplicate host header')
+    })
+  })
+
+  await t.completed
+})
+
+test('handle single content-length and host headers as array', async (t) => {
+  t = tspl(t, { plan: 5 })
+  const headers = ['Host', 'example.com', 'Content-Length', '5']
+
+  const server = createServer({ joinDuplicateHeaders: true }, (req, res) => {
+    t.strictEqual(req.headers.host, 'example.com')
+    t.strictEqual(req.headers['content-length'], '5')
+    let body = ''
+    req.setEncoding('utf8')
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      t.strictEqual(body, 'hello')
+      res.end()
+    })
+  })
+  after(() => server.close())
+  server.listen(0, () => {
+    const client = new Client(`http://localhost:${server.address().port}`)
+    after(() => client.close())
+
+    client.request({
+      path: '/',
+      method: 'POST',
+      headers,
+      body: 'hello'
+    }, (err, data) => {
+      t.ifError(err)
+      t.strictEqual(data.statusCode, 200)
+      data.body.resume()
+    })
+  })
+
+  await t.completed
+})
