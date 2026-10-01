@@ -202,7 +202,57 @@ test('ByteParser rejects fragmented uncompressed messages whose total size excee
 
   await new Promise((resolve) => setImmediate(resolve))
 
-  assertFailedWith1009(calls, new MessageSizeExceededError().message)
+  // The cumulative size is checked as soon as the last frame's length is
+  // known, before its body is buffered.
+  assertFailedWith1009(calls, 'Payload size exceeds maximum allowed size')
+  parser.destroy()
+})
+
+test('ByteParser fails the connection with 1008 once a message exceeds maxFragments', async (t) => {
+  const { ws, calls } = createOpenWebSocket()
+  const parser = new ByteParser(ws, null, { maxFragments: 3 })
+
+  // A message that is never terminated: without a limit every fragment
+  // would be buffered for as long as the peer keeps sending.
+  const chunk = Buffer.from('a')
+  parser.write(createFrame({ fin: false, opcode: 0x2, payload: chunk }))
+  parser.write(createFrame({ fin: false, opcode: 0x0, payload: chunk }))
+  parser.write(createFrame({ fin: false, opcode: 0x0, payload: chunk }))
+  parser.write(createFrame({ fin: false, opcode: 0x0, payload: chunk }))
+
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.strictEqual(calls.messages.length, 0, 'no message must be dispatched')
+  assert.strictEqual(calls.written.length, 1, 'a close frame must be sent')
+  const close = decodeCloseFrame(calls.written[0])
+  assert.strictEqual(close.code, 1008)
+  assert.strictEqual(close.reason, 'Too many message fragments')
+  assert.strictEqual(calls.abort, 1)
+  assert.strictEqual(calls.destroy, 1, 'the socket must be destroyed')
+  assert.deepStrictEqual(calls.errors, ['Too many message fragments'])
+  parser.destroy()
+})
+
+test('ByteParser applies maxFragments per message and ignores interleaved control frames', async (t) => {
+  const { ws, calls } = createOpenWebSocket()
+  const parser = new ByteParser(ws, null, { maxFragments: 3 })
+
+  for (let i = 0; i < 3; i++) {
+    parser.write(createFrame({ fin: false, opcode: 0x2, payload: Buffer.from('a') }))
+    parser.write(createFrame({ opcode: 0x9, payload: Buffer.from('ping') }))
+    parser.write(createFrame({ fin: false, opcode: 0x0, payload: Buffer.from('b') }))
+    parser.write(createFrame({ fin: true, opcode: 0x0, payload: Buffer.from('c') }))
+  }
+
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.strictEqual(calls.messages.length, 3)
+  for (const message of calls.messages) {
+    assert.strictEqual(Buffer.from(message).toString(), 'abc')
+  }
+  assert.strictEqual(calls.abort, 0)
+  assert.strictEqual(calls.destroy, 0)
+  assert.deepStrictEqual(calls.errors, [])
   parser.destroy()
 })
 

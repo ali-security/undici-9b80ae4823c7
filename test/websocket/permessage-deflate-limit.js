@@ -676,3 +676,149 @@ test('Default limit applies when the dispatcher does not expose webSocketOptions
   assert.strictEqual(messageReceived, false)
   assert.strictEqual(await closeCode, 1009, 'Client should close with 1009 (Message Too Big)')
 })
+
+test('cumulative payload size', (t, done) => {
+  const LIMIT = 100
+  const FRAGMENT_SIZE = 60
+  const NUM_FRAGMENTS = 10
+
+  const server = new WebSocketServer({ port: 0 })
+
+  server.on('connection', (ws) => {
+    const socket = ws._socket
+    const payload = Buffer.alloc(FRAGMENT_SIZE, 0x41)
+
+    for (let i = 0; i < NUM_FRAGMENTS; i++) {
+      const fin = i === NUM_FRAGMENTS - 1 ? 0x80 : 0x00
+      const opcode = i === 0 ? 0x02 : 0x00
+      const header = Buffer.alloc(2)
+      header[0] = fin | opcode
+      header[1] = FRAGMENT_SIZE
+      socket.write(header)
+      socket.write(payload)
+    }
+  })
+
+  const agent = new Agent({
+    webSocket: {
+      maxPayloadSize: LIMIT
+    }
+  })
+
+  const client = new WebSocket(`ws://127.0.0.1:${server.address().port}`, { dispatcher: agent })
+
+  t.after(async () => {
+    client.close()
+    server.close()
+    await agent.close()
+  })
+
+  client.onmessage = () => assert.fail('message should not be received')
+
+  client.addEventListener('error', (event) => {
+    assert.ok(event)
+    done()
+  })
+})
+
+/**
+ * Creates `count` 1-byte binary frames that together form a single fragmented
+ * message. The last frame only has FIN set when `terminate` is true.
+ * @param {number} count
+ * @param {boolean} [terminate]
+ * @returns {Buffer}
+ */
+function createFragmentedMessage (count, terminate = false) {
+  const frames = Buffer.alloc(count * 3, 0x61)
+
+  for (let i = 0; i < count; i++) {
+    const fin = terminate && i === count - 1 ? 0x80 : 0x00
+    const opcode = i === 0 ? 0x02 : 0x00
+    frames[i * 3] = fin | opcode
+    frames[i * 3 + 1] = 1
+  }
+
+  return frames
+}
+
+test('Agent webSocketOptions.maxFragments defaults to 131072 and is configurable', async (t) => {
+  const defaultAgent = new Agent()
+  const customAgent = new Agent({ webSocket: { maxFragments: 5 } })
+  const disabledAgent = new Agent({ webSocket: { maxFragments: 0 } })
+
+  t.after(() => Promise.all([defaultAgent.close(), customAgent.close(), disabledAgent.close()]))
+
+  assert.strictEqual(defaultAgent.webSocketOptions.maxFragments, 131072)
+  assert.strictEqual(customAgent.webSocketOptions.maxFragments, 5)
+  assert.strictEqual(disabledAgent.webSocketOptions.maxFragments, 0)
+})
+
+test('Unbounded fragment flood is rejected with the default configuration', async (t) => {
+  // No dispatcher is configured: the default limit of 131072 fragments must
+  // apply, even though every fragment is tiny and far below maxPayloadSize.
+  let messageReceived = false
+
+  const { server, closeCode } = await createRawServer(t, (socket) => {
+    setTimeout(() => {
+      socket.write(createFragmentedMessage(131072 + 1))
+    }, 100)
+  })
+
+  const client = new WebSocket(`ws://127.0.0.1:${server.address().port}`)
+
+  client.addEventListener('message', () => {
+    messageReceived = true
+  })
+
+  const closed = await raceTimeout(once(client, 'close'), 15000)
+
+  assert.ok(closed, 'Connection should be closed after exceeding the default fragment limit')
+  assert.strictEqual(messageReceived, false)
+  assert.strictEqual(await closeCode, 1008, 'Client should close with 1008 (Policy Violation)')
+})
+
+test('Messages with exactly the default number of fragments are delivered', async (t) => {
+  const { server } = await createRawServer(t, (socket) => {
+    setTimeout(() => {
+      socket.write(createFragmentedMessage(131072, true))
+    }, 100)
+  })
+
+  const client = new WebSocket(`ws://127.0.0.1:${server.address().port}`)
+  client.binaryType = 'arraybuffer'
+
+  const result = await raceTimeout(once(client, 'message'), 15000)
+
+  assert.ok(result, 'The message should be delivered')
+  assert.strictEqual(result[0].data.byteLength, 131072)
+  assert.strictEqual(client.readyState, WebSocket.OPEN)
+  client.close()
+})
+
+test('Default fragment limit applies when the dispatcher does not expose webSocketOptions', async (t) => {
+  let messageReceived = false
+
+  const { server, closeCode } = await createRawServer(t, (socket) => {
+    setTimeout(() => {
+      socket.write(createFragmentedMessage(131072 + 1))
+    }, 100)
+  })
+
+  const agent = new Agent()
+  t.after(() => agent.close())
+
+  const dispatcher = new ForwardingDispatcher(agent)
+  assert.strictEqual(dispatcher.webSocketOptions, undefined)
+
+  const client = new WebSocket(`ws://127.0.0.1:${server.address().port}`, { dispatcher })
+
+  client.addEventListener('message', () => {
+    messageReceived = true
+  })
+
+  const closed = await raceTimeout(once(client, 'close'), 15000)
+
+  assert.ok(closed, 'Connection should be closed after exceeding the default fragment limit')
+  assert.strictEqual(messageReceived, false)
+  assert.strictEqual(await closeCode, 1008, 'Client should close with 1008 (Policy Violation)')
+})
